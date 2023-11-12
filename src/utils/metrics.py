@@ -195,6 +195,42 @@ def find_nearest_time_idx(times, target_time, excluded_indices, tolerance):
 
     return best_idx, best_error
 
+from bisect import bisect_left
+
+# def find_nearest_time_idx(times, target_time, excluded_indices, tolerance):
+#     """Find the index of the nearest time to the target_time
+#     that is not in excluded_indices using binary search."""
+    
+#     n = len(times)
+#     left, right = 0, n - 1
+#     best_idx = None
+#     best_error = float("inf")
+
+#     while left <= right:
+#         mid = left + (right - left) // 2
+
+#         if mid not in excluded_indices:
+#             error = abs(times[mid] - target_time)
+#             if error < best_error:
+#                 best_error = error
+#                 best_idx = mid
+
+#         if times[mid] < target_time:
+#             left = mid + 1
+#         else:
+#             right = mid - 1
+
+#     # Checking nearby indices within the tolerance
+#     for offset in range(1, tolerance + 1):
+#         for check_idx in [best_idx - offset, best_idx + offset]:
+#             if 0 <= check_idx < n and check_idx not in excluded_indices:
+#                 error = abs(times[check_idx] - target_time)
+#                 if error < best_error:
+#                     best_error = error
+#                     best_idx = check_idx
+
+#     return best_idx, best_error
+
 
 def match_detections(
     tolerance: float, ground_truths: pd.DataFrame, detections: pd.DataFrame
