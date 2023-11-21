@@ -8,36 +8,53 @@ from torch.utils.data import Dataset
 from torchvision.transforms.functional import resize
 
 from src.conf import InferenceConfig, TrainConfig
-from src.utils.common import nearest_valid_size, negative_sampling, pad_if_needed, random_crop
+from src.utils.common import (
+    gaussian_label,
+    nearest_valid_size,
+    negative_sampling,
+    pad_if_needed,
+    random_crop,
+)
 
 
 ###################
 # Label
 ###################
-def get_detr_label(
-    this_event_df: pd.DataFrame,
-    duration: int,
-    start: int,
-    end: int,
-    max_det: int = 20,
+def get_centernet_label(
+    this_event_df: pd.DataFrame, num_frames: int, duration: int, start: int, end: int
 ) -> np.ndarray:
-    # # (start, end)の範囲と(onset, wakeup)の範囲が重なるものを取得
+    # (start, end)の範囲と(onset, wakeup)の範囲が重なるものを取得
     this_event_df = this_event_df.query("@start <= wakeup & onset <= @end")
 
-    label = np.zeros((max_det, 3))  # (num_frames, [objectness, onset, wakeup])
-    # 1dbboxのラベルを作成
-    for i, (onset, wakeup) in enumerate(this_event_df[["onset", "wakeup"]].to_numpy()):
-        onset = (onset - start) / duration  # 相対時間に変換
-        wakeup = (wakeup - start) / duration  # 相対時間に変換
-        label[i] = np.array([1, onset, wakeup])
+    # labelを作成
+    # onset_pos, wakeup_pos, onset_offset, wakeup_offset, onset_bbox_size, wakeup_bbox_size
+    label = np.zeros((num_frames, 6))
+    for onset, wakeup in this_event_df[["onset", "wakeup"]].to_numpy():
+        onset_pos = int((onset - start) / duration * num_frames)
+        onset_offset = (onset - start) / duration * num_frames - onset_pos
+        wakeup_pos = int((wakeup - start) / duration * num_frames)
+        wakeup_offset = (wakeup - start) / duration * num_frames - wakeup_pos
 
-    # 0 <= onset, wakeup <= 1になるようにclip
-    label[:, 1:] = np.clip(label[:, 1:], 0, 1)
+        # 区間に入らない場合は、posをclipする.
+        # e.g. num_frames=100, onset_pos=50, wakeup_pos=150
+        # -> onset_pos=50, wakeup_pos=100, bbox_size=(100-50)/100=0.5
+        bbox_size = (min(wakeup_pos, num_frames) - max(onset_pos, 0)) / num_frames
 
+        if onset_pos >= 0 and onset_pos < num_frames:
+            label[onset_pos, 0] = 1
+            label[onset_pos, 2] = onset_offset
+            label[onset_pos, 4] = bbox_size
+
+        if wakeup_pos < num_frames and wakeup_pos >= 0:
+            label[wakeup_pos, 1] = 1
+            label[wakeup_pos, 3] = wakeup_offset
+            label[wakeup_pos, 5] = bbox_size
+
+    # org_pos = pred_pos + pred_offset, don't use bbox_size. it's for loss.
     return label
 
 
-class DETRTrainDataset(Dataset):
+class CenterNetTrainDataset(Dataset):
     def __init__(
         self,
         cfg: TrainConfig,
@@ -45,7 +62,6 @@ class DETRTrainDataset(Dataset):
         event_df: pl.DataFrame,
     ):
         self.cfg = cfg
-        self.max_det = cfg.model.params["max_det"]
         self.event_df: pd.DataFrame = (
             event_df.pivot(index=["series_id", "night"], columns="event", values="step")
             .drop_nulls()
@@ -91,17 +107,20 @@ class DETRTrainDataset(Dataset):
         ).squeeze(0)
 
         # from hard label to gaussian label
-        self.upsampled_num_frames // self.cfg.downsample_rate
-        label = get_detr_label(this_event_df, self.cfg.duration, start, end, max_det=self.max_det)
+        num_frames = self.upsampled_num_frames // self.cfg.downsample_rate
+        label = get_centernet_label(this_event_df, num_frames, self.cfg.duration, start, end)
+        label[:, [0, 1]] = gaussian_label(
+            label[:, [0, 1]], offset=self.cfg.dataset.offset, sigma=self.cfg.dataset.sigma
+        )
 
         return {
             "series_id": series_id,
             "feature": feature,  # (num_features, upsampled_num_frames)
-            "label": torch.FloatTensor(label),  # (max_det, [objectness, onset, wakeup])
+            "label": torch.FloatTensor(label),  # (pred_length, num_classes)
         }
 
 
-class DETRValidDataset(Dataset):
+class CenterNetValidDataset(Dataset):
     def __init__(
         self,
         cfg: TrainConfig,
@@ -109,7 +128,6 @@ class DETRValidDataset(Dataset):
         event_df: pl.DataFrame,
     ):
         self.cfg = cfg
-        self.max_det = cfg.model.params["max_det"]
         self.chunk_features = chunk_features
         self.keys = list(chunk_features.keys())
         self.event_df = (
@@ -139,9 +157,14 @@ class DETRValidDataset(Dataset):
         chunk_id = int(chunk_id)
         start = chunk_id * self.cfg.duration
         end = start + self.cfg.duration
-        self.upsampled_num_frames // self.cfg.downsample_rate
-        this_event_df = self.event_df.query("series_id == @series_id").reset_index(drop=True)
-        label = get_detr_label(this_event_df, self.cfg.duration, start, end, max_det=self.max_det)
+        num_frames = self.upsampled_num_frames // self.cfg.downsample_rate
+        label = get_centernet_label(
+            self.event_df.query("series_id == @series_id").reset_index(drop=True),
+            num_frames,
+            self.cfg.duration,
+            start,
+            end,
+        )
         return {
             "key": key,
             "feature": feature,  # (num_features, duration)
@@ -149,7 +172,7 @@ class DETRValidDataset(Dataset):
         }
 
 
-class DETRTestDataset(Dataset):
+class CenterNetTestDataset(Dataset):
     def __init__(
         self,
         cfg: InferenceConfig,

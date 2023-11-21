@@ -60,7 +60,7 @@ unzip child-mind-institute-detect-sleep-states.zip
 ### 2. Preprocess data
 
 ```bash
-rye run python -m run/prepare_data.py phase=train,test
+rye run python run/prepare_data.py -m phase=train,test
 ```
 
 ## Train Model
@@ -73,9 +73,8 @@ You can easily perform experiments by changing the parameters because [hydra](ht
 The following commands perform experiments with downsample_rate of 2, 4, 6, and 8.
 
 ```bash
-rye run python -m run/train.py downsample_rate=2,4,6,8
+rye run python run/train.py -m downsample_rate=2,4,6,8
 ```
-
 
 ## Upload Model
 ```bash
@@ -86,4 +85,52 @@ rye run python tools/upload_dataset.py
 The following commands are for inference of LB0.714 
 ```bash
 rye run python run/inference.py dir=kaggle exp_name=exp001 weight.run_name=single downsample_rate=2 duration=5760 model.params.encoder_weights=null pp.score_th=0.005 pp.distance=40 phase=test
+```
+
+## Implemented models
+
+The model is built with two components: feature_extractor and decoder.
+
+The feature_extractor and decoder that can be specified are as follows
+
+### Feature Extractor
+
+- [CNNSpectrogram](https://github.com/analokmaus/kaggle-g2net-public/tree/main/models1d_pytorch)
+- LSTMFeatureExtractor
+- [PANNsFeatureExtractor](https://arxiv.org/abs/1912.10211)
+- SpecFeatureExtractor
+
+### Decoder
+
+- MLPDecoder
+- LSTMDecoder
+- TransformerDecoder
+- TransformerCNNDecoder
+- [UNet1DDecoder](https://github.com/bamps53/kaggle-dfl-3rd-place-solution/blob/master/models/cnn_3d.py)
+- MLPDecoder
+
+### Model
+
+- Spec2DCNN: Segmentation through UNet.
+- Spec1D: Segmentation without UNet
+- DETR2DCNN: Use UNet to detect sleep as in [DETR](https://arxiv.org/abs/2005.12872). This model is still under development.
+- CenterNet: Detect onset and offset, respectively, like [CenterNet](https://arxiv.org/abs/1904.07850) using UNet
+- TransformerAutoModel: 
+  - Segmentation using huggingface's [AutoModel](https://huggingface.co/transformers/v3.0.2/model_doc/auto.html). don't use feature_extractor and decoder.
+  -  Since the Internet is not available during inference, it is necessary to create a config dataset and specify the path in the model_name.
+
+The correspondence table between each model and dataset is as follows.
+
+| model     | dataset   | 
+| --------- | --------- | 
+| Spec1D    | seg       | 
+| Spec2DCNN | seg       | 
+| DETR2DCNN | detr      | 
+| CenterNet | centernet | 
+| TransformerAutoModel | seg |
+
+The command to train CenterNet with feature_extractor=CNNSpectrogram, decoder=UNet1DDecoder is as follows
+
+```bash
+rye run python run/train.py model=CenterNet dataset=centernet feature_extractor=CNNSpectrogram decoder=UNet1DDecoder
 ```
