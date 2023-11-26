@@ -15,6 +15,11 @@ from pytorch_lightning.loggers import WandbLogger
 from src.conf import TrainConfig
 from src.datamodule import SleepDataModule
 from src.modelmodule import PLSleepModel
+import os
+
+
+# Set wandb to offline mode
+os.environ['WANDB_MODE'] = 'offline'
 
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s - %(levelname)s:%(name)s - %(message)s"
