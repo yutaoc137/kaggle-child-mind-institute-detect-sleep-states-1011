@@ -40,7 +40,7 @@ requires-python = ">= 3.10"
 
 [[tool.rye.sources]]
 name = "torch"
-url = "https://download.pytorch.org/whl/cu121"
+url = "https://download.pytorch.org/whl/cu118"
 type = "index"
 
 [build-system]
